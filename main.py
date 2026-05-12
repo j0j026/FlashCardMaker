@@ -17,7 +17,7 @@ ACCENT_GREY = "#555555"
 class PPTXBuilderApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("PPTX Definition Builder Pro")
+        self.root.title("Flashcard Maker")
         self.root.geometry("800x850")
         self.root.configure(bg=BG_DARK)
 

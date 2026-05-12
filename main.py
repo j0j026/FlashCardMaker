@@ -10,7 +10,7 @@ class PPTXBuilderApp:
     def __init__(self, root):
         self.root = root
         self.root.title("PPTX Definition Builder")
-        self.root.geometry("650x600")
+        self.root.geometry("650x650")
 
         self.txt_path = ""
         self.pptx_path = ""
@@ -47,18 +47,30 @@ class PPTXBuilderApp:
         self.progress_label = tk.Label(self.input_frame, text="Waiting for files...", fg="blue")
         self.progress_label.pack()
 
-        self.cat_label = tk.Label(self.input_frame, text="Category: ", font=("Arial", 11, "bold"))
+        self.cat_label = tk.Label(self.input_frame, text="Category: ", font=("Arial", 11, "bold"), wraplength=550)
         self.cat_label.pack(pady=2)
 
-        self.topic_label = tk.Label(self.input_frame, text="Topic: ", font=("Arial", 13, "bold"), fg="#2c3e50")
+        self.topic_label = tk.Label(self.input_frame, text="Topic: ", font=("Arial", 13, "bold"), fg="#2c3e50",
+                                    wraplength=550)
         self.topic_label.pack(pady=5)
 
         self.text_box = tk.Text(self.input_frame, height=8, width=60, font=("Arial", 11), wrap="word", state="disabled")
         self.text_box.pack(pady=10, padx=10)
 
-        self.submit_btn = tk.Button(self.input_frame, text="Submit & Save Slide",
-                                    command=self.save_current_step, bg="#27ae60", fg="white", state="disabled")
-        self.submit_btn.pack(pady=5)
+        # --- Navigation Buttons ---
+        nav_frame = tk.Frame(self.input_frame)
+        nav_frame.pack(pady=10)
+
+        self.back_btn = tk.Button(nav_frame, text="← Back", command=self.go_back, state="disabled", width=10)
+        self.back_btn.grid(row=0, column=0, padx=5)
+
+        self.submit_btn = tk.Button(nav_frame, text="Submit & Save",
+                                    command=self.save_current_step, bg="#27ae60", fg="white", state="disabled",
+                                    width=20)
+        self.submit_btn.grid(row=0, column=1, padx=5)
+
+        self.skip_btn = tk.Button(nav_frame, text="Skip →", command=self.skip_step, state="disabled", width=10)
+        self.skip_btn.grid(row=0, column=2, padx=5)
 
         self.text_box.bind("<Return>", self.handle_enter)
 
@@ -70,7 +82,6 @@ class PPTXBuilderApp:
             self.check_ready()
 
     def select_output(self):
-        # We use asksaveasfilename so they can pick an existing file or name a new one
         path = filedialog.asksaveasfilename(defaultextension=".pptx", filetypes=[("PowerPoint", "*.pptx")])
         if path:
             self.pptx_path = path
@@ -81,24 +92,24 @@ class PPTXBuilderApp:
         if self.txt_path and self.pptx_path:
             self.btn_start.config(state="normal")
 
-    def get_existing_topics(self):
-        """Reads the PowerPoint and returns a set of topic titles already present."""
-        existing_topics = set()
-        if os.path.exists(self.pptx_path):
-            try:
-                prs = Presentation(self.pptx_path)
-                for slide in prs.slides:
-                    for shape in slide.shapes:
-                        if shape.has_text_frame:
-                            # We check every text box on the slide for a match
-                            text = shape.text.strip()
-                            existing_topics.add(text)
-            except Exception as e:
-                print(f"Note: Could not read existing PPTX (it might be empty or new): {e}")
-        return existing_topics
+    def get_existing_slide_data(self, topic_name):
+        """Searches for a slide by its hidden name and returns its definition text."""
+        if not os.path.exists(self.pptx_path):
+            return None
+
+        try:
+            prs = Presentation(self.pptx_path)
+            for slide in prs.slides:
+                if slide.name == topic_name:
+                    # Our definition is always the 3rd shape added (index 2)
+                    # We check if it exists and has text
+                    if len(slide.shapes) >= 3 and slide.shapes[2].has_text_frame:
+                        return slide.shapes[2].text_frame.text
+            return None
+        except:
+            return None
 
     def start_session(self):
-        # 1. Parse text file
         self.raw_topics = []
         try:
             with open(self.txt_path, "r", encoding="utf-8") as f:
@@ -114,20 +125,23 @@ class PPTXBuilderApp:
             messagebox.showerror("Error", f"Could not read text file: {e}")
             return
 
-        # 2. Check PowerPoint for progress
-        existing = self.get_existing_topics()
-
-        # 3. Find first topic not in the PowerPoint
+        # Find progress: start at the first topic that doesn't have a slide yet
         self.current_index = 0
-        while self.current_index < len(self.raw_topics):
-            if self.raw_topics[self.current_index]['topic'] in existing:
-                self.current_index += 1
-            else:
-                break
+        if os.path.exists(self.pptx_path):
+            try:
+                prs = Presentation(self.pptx_path)
+                existing_names = [s.name for s in prs.slides]
+                while self.current_index < len(self.raw_topics):
+                    if self.raw_topics[self.current_index]['topic'] in existing_names:
+                        self.current_index += 1
+                    else:
+                        break
+            except:
+                pass
 
-        # 4. Enable UI
         self.text_box.config(state="normal")
         self.submit_btn.config(state="normal")
+        self.skip_btn.config(state="normal")
         self.btn_start.config(state="disabled")
         self.btn_input.config(state="disabled")
         self.btn_output.config(state="disabled")
@@ -136,33 +150,50 @@ class PPTXBuilderApp:
         self.text_box.focus_force()
 
     def update_display(self):
+        self.back_btn.config(state="normal" if self.current_index > 0 else "disabled")
+
         if self.current_index < len(self.raw_topics):
             item = self.raw_topics[self.current_index]
             self.progress_label.config(text=f"Topic {self.current_index + 1} of {len(self.raw_topics)}")
             self.cat_label.config(text=f"Category: {item['cat']}")
             self.topic_label.config(text=f"Topic: {item['topic']}")
+
+            # CLEAR and FETCH existing content
             self.text_box.delete("1.0", tk.END)
+            existing_text = self.get_existing_slide_data(item['topic'])
+            if existing_text:
+                self.text_box.insert("1.0", existing_text)
         else:
-            messagebox.showinfo("Done!", "All topics from the text file are present in the PowerPoint!")
+            messagebox.showinfo("Done!", "You've reached the end of the list!")
             self.root.destroy()
 
     def handle_enter(self, event):
-        if not (event.state & 0x1):  # Shift not held
+        if not (event.state & 0x1):
             self.save_current_step()
             return "break"
 
-    def save_current_step(self):
-        definition = self.text_box.get("1.0", tk.END).strip()
-        if not definition: return
+    def go_back(self):
+        if self.current_index > 0:
+            self.current_index -= 1
+            self.update_display()
 
-        item = self.raw_topics[self.current_index]
-        self.add_slide_to_pptx(item['cat'], item['topic'], definition)
-
-        # Move to next
+    def skip_step(self):
         self.current_index += 1
         self.update_display()
 
-    def add_slide_to_pptx(self, category, topic, definition):
+    def save_current_step(self):
+        definition = self.text_box.get("1.0", tk.END).strip()
+        if not definition:
+            messagebox.showwarning("Warning", "Definition cannot be empty.")
+            return
+
+        item = self.raw_topics[self.current_index]
+        self.add_or_update_slide(item['cat'], item['topic'], definition)
+
+        self.current_index += 1
+        self.update_display()
+
+    def add_or_update_slide(self, category, topic, definition):
         if os.path.exists(self.pptx_path):
             try:
                 prs = Presentation(self.pptx_path)
@@ -171,39 +202,55 @@ class PPTXBuilderApp:
         else:
             prs = Presentation()
 
-        blank_layout = prs.slide_layouts[6]
-        slide = prs.slides.add_slide(blank_layout)
+        # Check if slide already exists to update it
+        target_slide = None
+        for slide in prs.slides:
+            if slide.name == topic:
+                target_slide = slide
+                break
 
-        # Title/Category Bar
-        cat_shape = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9), Inches(0.5))
-        cat_frame = cat_shape.text_frame
-        cat_frame.text = category.upper()
-        cat_frame.paragraphs[0].font.size = Pt(14)
-        cat_frame.paragraphs[0].font.bold = True
+        if target_slide:
+            # Update existing shapes (assuming standard order: 0:Cat, 1:Topic, 2:Def)
+            if len(target_slide.shapes) >= 3:
+                target_slide.shapes[0].text_frame.text = category.upper()
+                target_slide.shapes[1].text_frame.text = topic
+                target_slide.shapes[2].text_frame.text = definition
+        else:
+            # Create new slide
+            blank_layout = prs.slide_layouts[6]
+            slide = prs.slides.add_slide(blank_layout)
+            slide.name = topic
 
-        # Topic Bar
-        top_shape = slide.shapes.add_textbox(Inches(0.5), Inches(0.7), Inches(9), Inches(0.6))
-        top_frame = top_shape.text_frame
-        top_frame.text = topic
-        top_frame.paragraphs[0].font.size = Pt(28)
-        top_frame.paragraphs[0].font.bold = True
+            # Category
+            cat_shape = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9), Inches(0.5))
+            cat_frame = cat_shape.text_frame
+            cat_frame.word_wrap = True
+            cat_frame.text = category.upper()
+            cat_frame.paragraphs[0].font.size = Pt(14)
+            cat_frame.paragraphs[0].font.bold = True
 
-        # Definition Box
-        def_shape = slide.shapes.add_textbox(Inches(0.5), Inches(1.5), Inches(9), Inches(5.5))
-        def_frame = def_shape.text_frame
-        def_frame.word_wrap = True
-        def_frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+            # Topic
+            top_shape = slide.shapes.add_textbox(Inches(0.5), Inches(0.7), Inches(9), Inches(0.8))
+            top_frame = top_shape.text_frame
+            top_frame.word_wrap = True
+            top_frame.text = topic
+            top_frame.paragraphs[0].font.size = Pt(28)
+            top_frame.paragraphs[0].font.bold = True
 
-        p = def_frame.paragraphs[0]
-        p.text = definition
-        p.font.size = Pt(20)
-        def_frame.vertical_anchor = MSO_ANCHOR.TOP
+            # Definition
+            def_shape = slide.shapes.add_textbox(Inches(0.5), Inches(1.6), Inches(9), Inches(5.4))
+            def_frame = def_shape.text_frame
+            def_frame.word_wrap = True
+            def_frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+            p = def_frame.paragraphs[0]
+            p.text = definition
+            p.font.size = Pt(20)
+            def_frame.vertical_anchor = MSO_ANCHOR.TOP
 
         try:
             prs.save(self.pptx_path)
         except PermissionError:
-            messagebox.showerror("Error",
-                                 "Could not save! Please close the PowerPoint file if it is open in another program.")
+            messagebox.showerror("Error", "Close the PowerPoint file before saving!")
 
 
 if __name__ == "__main__":
